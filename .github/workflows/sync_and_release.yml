@@ -1,0 +1,133 @@
+name: Sync to Gist and Optional Release
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "video_downloader_mac.js"
+  workflow_dispatch: # Actionsタブからの手動実行を許可します
+    inputs:
+      create_release:
+        description: "GitHub Releaseを作成しますか？ (true/false)"
+        required: false
+        default: false
+        type: boolean
+      release_tag:
+        description: "リリースのタグ名 (例: v1.0.0)。create_releaseがtrueの場合に必須です。"
+        required: false
+        type: string
+      release_name:
+        description: "リリース名 (例: Version 1.0.0)。省略可能です。"
+        required: false
+        type: string
+      release_body:
+        description: "リリースノート (Markdown形式)。省略可能です。コミット履歴からの自動生成も利用できます。"
+        required: false
+        type: string
+      generate_release_notes:
+        description: "コミット履歴からリリースノートを自動生成しますか？ (true/false)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  sync_and_release_job:
+    runs-on: ubuntu-latest
+    permissions:
+      # ncipollo/release-action がリリース/タグ作成、アセットアップロードに GITHUB_TOKEN を使用するため必要
+      contents: write
+      # Gistの操作は GIST_PAT で別途行うため、ここではGist関連のパーミッションは不要
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # ncipollo/release-action でコミット履歴からリリースノートを生成する場合に全履歴が必要
+          fetch-depth: 0
+
+      - name: Define Gist parameters
+        id: gist_params
+        run: |
+          # TODO: 必要に応じて、ファイルパスやGistの詳細を調整してください
+          echo "FILE_PATH=video_downloader_mac.js" >> $GITHUB_ENV
+          echo "GIST_DESCRIPTION=JavaScript for video downloading on Mac (auto-updated via GitHub Actions)" >> $GITHUB_ENV
+          echo "GIST_FILE_NAME=video_downloader_mac.js" >> $GITHUB_ENV # Gist上でのファイル名
+
+      - name: Sync file to Gist
+        env:
+          GH_TOKEN: ${{ secrets.GIST_PAT }} # Gist操作用のPAT
+          GIST_ID: ${{ secrets.GIST_ID }} # Gist ID (初回実行後に設定)
+        run: |
+          # GIST_PATが設定されているか確認
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error title=Missing Secret::必要なSecret 'GIST_PAT'が設定されていません。'gist'スコープを持つPersonal Access Tokenを作成し、リポジトリのActions secretsにGIST_PATとして追加してください。"
+            exit 1
+          fi
+
+          # 対象ファイルが存在するか確認
+          if [ ! -f "${{ env.FILE_PATH }}" ]; then
+            echo "::error title=File Not Found::FILE_PATHで指定されたファイル ('${{ env.FILE_PATH }}') がリポジトリに見つかりません。"
+            exit 1
+          fi
+
+          # GitHub CLI (gh) は通常、GitHubホストランナー (ubuntu-latestなど) にプリインストールされています。
+          if [ -z "$GIST_ID" ]; then
+            echo "Secret 'GIST_ID'が設定されていません。新しい公開Gistを作成します..."
+            GIST_OUTPUT=$(gh gist create "${{ env.FILE_PATH }}" --public --desc "${{ env.GIST_DESCRIPTION }}")
+            # 出力からGist IDを抽出 (ghのバージョンによりURLかIDが出力されるため両対応)
+            if [[ "$GIST_OUTPUT" == https* ]]; then
+              NEW_GIST_ID=$(basename "$GIST_OUTPUT")
+            else
+              NEW_GIST_ID="$GIST_OUTPUT"
+            fi
+            if [ -z "$NEW_GIST_ID" ]; then
+                echo "::error title=Gist Creation Failed::Gistの作成またはIDの抽出に失敗しました。出力: $GIST_OUTPUT"
+                exit 1
+            fi
+            echo "::notice title=New Gist Created::新しいGistが正常に作成されました！"
+            echo "Gist ID: $NEW_GIST_ID"
+            echo "Gist URL: https://gist.github.com/$NEW_GIST_ID"
+            echo "重要: このGistの今後の更新を有効にするには、リポジトリの"
+            echo "Settings > Secrets and variables > Actions secrets に移動し、"
+            echo "'GIST_ID'という名前の新しいSecretを作成して、値に '$NEW_GIST_ID' を設定してください。"
+          else
+            echo "Secret 'GIST_ID' は '$GIST_ID' に設定されています。既存のGistを更新します..."
+            gh gist edit "$GIST_ID" --filename "${{ env.GIST_FILE_NAME }}" "${{ env.FILE_PATH }}" --desc "${{ env.GIST_DESCRIPTION }}"
+            if [ $? -eq 0 ]; then
+              echo "::notice title=Gist Updated::Gist (ID: '$GIST_ID') が正常に更新されました。"
+              echo "Gist URL: https://gist.github.com/$GIST_ID"
+            else
+              echo "::error title=Gist Update Failed::Gist (ID: '$GIST_ID') の更新に失敗しました。GIST_IDが正しいか、GIST_PATが必要な権限を持っているか確認してください。"
+              exit 1
+            fi
+          fi
+
+      - name: Validate Release Inputs
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' && !github.event.inputs.release_tag
+        run: |
+          echo "::error title=Missing Input::'release_tag' は 'create_release' が 'true' の場合に必須です。"
+          exit 1
+
+      - name: Create GitHub Release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' && github.event.inputs.release_tag
+        uses: ncipollo/release-action@v1
+        with:
+          # このアクションは指定されたタグが存在しない場合、それを作成します。
+          tag: ${{ github.event.inputs.release_tag }}
+          # リリース名が入力されていればそれを使用し、なければタグ名から自動生成します。
+          name: ${{ github.event.inputs.release_name || format('Release {0}', github.event.inputs.release_tag) }}
+          # リリースノートが入力されていればそれを使用します。
+          # generate_release_notes が true の場合、ここで指定した body は自動生成されたノートの前に追加されます。
+          body: ${{ github.event.inputs.release_body }}
+          # true にすると、コミット履歴からリリースノートを自動生成します。
+          # これを有効にする場合、チェックアウトステップで `Workspace-depth: 0` が推奨されます。
+          generateReleaseNotes: ${{ github.event.inputs.generate_release_notes }}
+          # draft: false # ドラフトとしてリリースを作成する場合は true
+          # prerelease: false # プレリリースとしてマークする場合は true
+          # リリース操作には GITHUB_TOKEN を使用します。ジョブの permissions で contents: write が設定されていればOKです。
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Gistに同期したファイルをリリースのアセットとしてアップロードします。
+          # 複数のファイルはカンマ区切りやglobパターンで指定可能です。例: "file1.js,file2.zip,dist/*"
+          artifacts: "${{ env.FILE_PATH }}"
+          # artifactContentType: "text/javascript" # 必要に応じてアセットのContent-Typeを指定
