@@ -1,10 +1,22 @@
 /**
- * Automatorから呼び出されるエントリポイント。
- * 前面のSafari/ChromeタブURLを取得し、yt-dlpでダウンロードを行う。
- * 処理結果に応じて通知を表示し、予期せぬエラーの場合はダイアログを表示する。
- *
- * @returns {string[]} Automator連携用。返値は使用しないため空配列を返す。
+ * @file Automatorから呼び出されるJXAスクリプト。
+ * SafariまたはGoogle Chromeで現在開いているタブのURLを取得し、
+ * yt-dlpを使用して動画をダウンロードする。
+ * @version 1.2.0
  */
+
+/**
+ * アプリケーションのインスタンス。
+ * @type {Application}
+ */
+const APP = Application.currentApplication();
+APP.includeStandardAdditions = true;
+
+/**
+ * System Eventsアプリケーションのインスタンス。
+ * @type {Application}
+ */
+const SE = Application("System Events");
 
 /**
  * 実行ファイルのフルパスを検索する。
@@ -15,16 +27,14 @@
  * @returns {string|null} 見つかった場合は実行ファイルのフルパス、見つからない場合はnullを返す。
  */
 function findFullPathForExecutable(executableName) {
-  const app = Application.currentApplication();
-  app.includeStandardAdditions = true;
-
   // 1. `command -v` を試行 (環境変数PATHを確認)
   try {
-    const pathFromCommandV = app.doShellScript(`command -v "${executableName}"`).trim();
+    const pathFromCommandV = APP.doShellScript(`command -v "${executableName}"`).trim();
     if (pathFromCommandV.startsWith("/")) {
       return pathFromCommandV;
     }
   } catch (e) {
+    // `command -v` で見つからなかったか、何らかのエラーが発生した。
     // console.log(`デバッグ: '${executableName}' は 'command -v' で見つからなかった。エラー: ${e.message}`);
   }
 
@@ -37,34 +47,37 @@ function findFullPathForExecutable(executableName) {
   for (const path of commonPaths) {
     const fullPath = `${path}/${executableName}`;
     try {
-      app.doShellScript(`test -x "${fullPath}"`);
+      // ファイルが存在し、かつ実行可能であるかを確認
+      APP.doShellScript(`test -x "${fullPath}"`);
+      // console.log(`デバッグ: '${executableName}' を '${fullPath}' で発見。`);
       return fullPath; // 発見され、実行可能である。
     } catch (e) {
+      // このパスでは見つからないか、実行可能ではない。次のパスを試行する。
       // console.log(`デバッグ: '${fullPath}' は実行不可能か、見つからなかった。エラー: ${e.message}`);
     }
   }
+  // console.log(`デバッグ: '${executableName}' は一般的なパスでも見つからなかった。`);
   return null; // 実行ファイルは見つからなかった。
 }
 
 /**
- * 通知を表示する。
+ * macOSの通知を表示する。
  * @param {string} title - 通知のタイトル。
  * @param {string} message - 通知の本文。
  * @param {string} [subtitle] - 通知のサブタイトル (オプション)。
  */
-function showNotification(title, message, subtitle) {
-  const app = Application.currentApplication();
-  app.includeStandardAdditions = true;
+function showNotification(title, message, subtitle = "") {
   try {
     const options = { withTitle: title };
     if (subtitle) {
       options.subtitle = subtitle;
     }
-    app.displayNotification(message, options);
+    APP.displayNotification(message, options);
   } catch (e) {
     // 通知表示自体でエラーが発生した場合のフォールバック
     console.log(`通知表示エラー: ${e.message}`);
-    app.displayAlert("通知表示エラー", {
+    // フォールバックとしてアラートを表示 (ユーザーに何らかのフィードバックを確実に与えるため)
+    APP.displayAlert("通知表示エラー", {
       message: `タイトル: ${title}\nメッセージ: ${message}\n\nエラー詳細: ${e.message}`,
       buttons: ["OK"],
       as: "warning",
@@ -76,12 +89,10 @@ function showNotification(title, message, subtitle) {
  * エラーダイアログを表示する。
  * @param {string} title - ダイアログのタイトル。
  * @param {string} message - ダイアログの本文。
- * @param {string} [asType="critical"] - ダイアログの深刻度 ("critical", "warning", "informational")。
+ * @param {'critical'|'warning'|'informational'} [asType='critical'] - ダイアログの深刻度。
  */
 function showErrorDialog(title, message, asType = "critical") {
-  const app = Application.currentApplication();
-  app.includeStandardAdditions = true;
-  app.displayAlert(title, {
+  APP.displayAlert(title, {
     message: message,
     buttons: ["OK"],
     as: asType,
@@ -89,43 +100,98 @@ function showErrorDialog(title, message, asType = "critical") {
 }
 
 /**
- * メイン処理を実行する関数。
- * Automatorワークフローから呼び出される。
+ * アクティブなブラウザタブのURLを取得する。
+ * 対応ブラウザはSafariとGoogle Chrome。
+ * @returns {string|null} URL文字列、または取得できなかった場合はnull。
  */
-function run() {
-  "use strict";
-  const app = Application.currentApplication(); // この行は showNotification/showErrorDialog 内にもあるが、他で使う可能性も考慮し残す
-  app.includeStandardAdditions = true;
-
-  // 1. 前面アプリケーション名を取得
-  const se = Application("System Events");
-  const frontProcess = se.processes.whose({ frontmost: true })[0];
+function getActiveBrowserUrl() {
+  const frontProcess = SE.processes.whose({ frontmost: true })[0];
   const frontAppName = frontProcess?.name();
 
   if (!frontAppName) {
     console.log("前面アプリケーション名の取得に失敗。");
-    showErrorDialog("エラー", "前面アプリケーション名を取得できなかった。", "warning");
-    return [];
+    return null;
   }
 
-  // 2. SafariまたはChromeからアクティブタブのURLを取得するロジック
   const urlHandlers = {
-    Safari: () => Application("Safari").windows[0]?.currentTab()?.url(),
+    Safari: () => Application("Safari").documents[0]?.url(), // Safariはwindows[0].currentTab().url()よりdocuments[0].url()が安定する場合がある
     "Google Chrome": () => Application("Google Chrome").windows[0]?.activeTab()?.url(),
   };
 
   const getUrlFunction = urlHandlers[frontAppName];
-  const targetUrl = typeof getUrlFunction === "function" ? getUrlFunction() : null;
-
-  if (!targetUrl) {
-    console.log("対応ブラウザでURLの取得に失敗。");
-    showErrorDialog("エラー", `対応ブラウザ (${frontAppName}) でURLを取得できなかった。`, "warning");
-    return []; // 対応ブラウザ以外の場合は処理を中断
+  if (typeof getUrlFunction === "function") {
+    const url = getUrlFunction();
+    if (url) {
+      return url;
+    }
+    console.log(`${frontAppName}でURLが取得できなかった (タブが空、エラー等)。`);
+    return null;
   }
 
-  // yt-dlp のフルパスを検索
-  const ytDlpPath = findFullPathForExecutable("yt-dlp");
+  console.log(`非対応ブラウザ: ${frontAppName}。処理を終了する。`);
+  return null; // 対応ブラウザでない場合はnullを返す
+}
 
+/**
+ * yt-dlpコマンドを実行し、出力を取得する。
+ * @param {string} commandToExecute - 実行する完全なシェルコマンド文字列。
+ * @returns {{output: string, exitCode: number}} コマンドの出力と終了コード。
+ */
+function executeShellCommand(commandToExecute) {
+  let output = "";
+  let exitCode = 0;
+  try {
+    // 標準エラー出力(stderr)もキャプチャに含めるため `2>&1` を追加
+    output = APP.doShellScript(commandToExecute + " 2>&1");
+  } catch (e) {
+    // `doShellScript` がエラーをスローした場合 (通常、コマンドが非ゼロで終了した場合)
+    output = e.message; // エラーメッセージには多くの場合stderrの内容が含まれる
+    exitCode = e.number || 1; // エラーコードを取得 (存在しない場合は1をデフォルトとする)
+  }
+  return { output, exitCode };
+}
+
+/**
+ * yt-dlpの出力からダウンロードされたファイル名（単数または複数）を抽出する。
+ * @param {string} commandOutput - yt-dlpのコマンド出力。
+ * @returns {string} 抽出されたファイル名（改行区切り）、または空文字列。
+ */
+function extractDownloadedFileNames(commandOutput) {
+  // 1. マージ後のファイル名 (最も一般的なケース)
+  let matches = [...commandOutput.matchAll(/Merging formats into "([^"]+)"/g)];
+  if (matches.length > 0) {
+    return matches.map((m) => m[1].split("/").pop()).join("\n");
+  }
+
+  // 2. マージがない場合 (例: 音声のみ、または既に適切な形式でダウンロードされた場合)
+  matches = [...commandOutput.matchAll(/\[download\] Destination: (.*?)\n/g)];
+  if (matches.length > 0) {
+    return matches.map((m) => m[1].split("/").pop()).join("\n");
+  }
+
+  // 3. それでもファイル名が見つからない場合、[info] Downloading video to: 行から抽出試行
+  matches = [...commandOutput.matchAll(/\[info\] Downloading video to: (.*?)\n/g)];
+  if (matches.length > 0) {
+    return matches.map((m) => m[1].split("/").pop()).join("\n");
+  }
+  return ""; // ファイル名が見つからなかった場合
+}
+
+/**
+ * メイン処理を実行する関数。
+ * Automatorワークフローから呼び出される。
+ * @returns {string[]} Automator連携用。常に空配列を返す。
+ */
+function run() {
+  "use strict";
+
+  const targetUrl = getActiveBrowserUrl();
+  if (!targetUrl) {
+    // getActiveBrowserUrl内で既にconsole.log出力済みのため、ここでは何もしない
+    return [];
+  }
+
+  const ytDlpPath = findFullPathForExecutable("yt-dlp");
   if (!ytDlpPath) {
     showErrorDialog(
       "yt-dlp 実行エラー",
@@ -134,57 +200,32 @@ function run() {
     return [];
   }
 
-  // ffmpeg のフルパスを検索
   const ffmpegPath = findFullPathForExecutable("ffmpeg");
 
-  // 3. yt-dlp コマンドライン引数の組み立て
-  const cmdArgs = [`"${ytDlpPath}"`];
+  // yt-dlp コマンドライン引数の定義
+  const ytDlpArgs = [
+    `"${ytDlpPath}"`, // yt-dlp実行ファイルのパス
+    // '--ignore-config', // (オプション) システム全体やユーザーの設定ファイルを無視する場合
+    // '--no-warnings',   // (オプション) yt-dlpの警告を抑制する場合
+    ffmpegPath ? `--ffmpeg-location "${ffmpegPath}"` : "", // ffmpegのパス (見つかれば)
+    "-S codec:avc:aac,res:1080,fps:60,hdr:sdr", // ダウンロードフォーマットの優先順位
+    "-f bv+ba/b", // 最高品質のビデオとオーディオ、またはフォールバックとして最高品質
+    `-o "${"$"}HOME/Downloads/%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s"`, // 出力ファイル名テンプレート
+    `--ppa "Merger+ffmpeg_o1:-map_metadata -1"`, // ポストプロセッサ引数 (ffmpegでメタデータ削除)
+    `"${targetUrl}"`, // ダウンロード対象のURL
+  ];
 
-  if (ffmpegPath) {
-    cmdArgs.push(`--ffmpeg-location "${ffmpegPath}"`);
-  }
+  const commandToExecute = ytDlpArgs.filter((arg) => arg !== "").join(" "); // 空の引数を除外して結合
+  // console.log(`実行コマンド: ${commandToExecute}`);
 
-  cmdArgs.push(
-    "-S codec:avc:aac,res:1080,fps:60,hdr:sdr",
-    "-f bv+ba/b",
-    `-o "${"$"}HOME/Downloads/%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s"`,
-    `--ppa "Merger+ffmpeg_o1:-map_metadata -1"`,
-    `"${targetUrl}"`
-  );
+  const { output: commandOutput, exitCode } = executeShellCommand(commandToExecute);
 
-  const commandToExecute = cmdArgs.join(" ");
-
-  // 4. コマンド実行と出力のキャプチャ
-  let commandOutput = "";
-  let exitCode = 0;
-  try {
-    commandOutput = app.doShellScript(commandToExecute + " 2>&1");
-  } catch (e) {
-    commandOutput = e.message;
-    exitCode = e.number || 1;
-  }
-
-  // 5. 成功時の処理: 通知でファイル名やプレイリスト名を表示
   if (exitCode === 0) {
-    const mergedFileMatches = [...commandOutput.matchAll(/Merging formats into "([^"]+)"/g)];
-    let downloadedFiles = mergedFileMatches.map((m) => m[1].split("/").pop()).join("\n");
-
-    if (!downloadedFiles) {
-      const destinationMatches = [...commandOutput.matchAll(/\[download\] Destination: (.*?)\n/g)];
-      if (destinationMatches.length > 0) {
-        downloadedFiles = destinationMatches.map((m) => m[1].split("/").pop()).join("\n");
-      } else {
-        const infoDownloadingMatches = [...commandOutput.matchAll(/\[info\] Downloading video to: (.*?)\n/g)];
-        if (infoDownloadingMatches.length > 0) {
-          downloadedFiles = infoDownloadingMatches.map((m) => m[1].split("/").pop()).join("\n");
-        }
-      }
-    }
-
+    // 成功時の処理
+    const downloadedFiles = extractDownloadedFileNames(commandOutput);
     const alreadyDownloadedFiles = [...commandOutput.matchAll(/\[download\] (.*?) has already been downloaded/g)]
       .map((m) => m[1].split("/").pop())
       .join("\n");
-
     const playlistMatch = commandOutput.match(/\[download\] Downloading playlist: (.+)/);
     const playlistName = playlistMatch ? playlistMatch[1] : null;
 
@@ -206,9 +247,8 @@ function run() {
       }
     }
     showNotification("yt-dlp ダウンロード成功", notificationMessage);
-  }
-  // 6. エラー時の処理: "Unsupported URL" のみ通知、他は原文をダイアログ表示
-  else {
+  } else {
+    // エラー時の処理
     const videoTitleMatch =
       commandOutput.match(/\[youtube\] (.*?): Downloading webpage/) ||
       commandOutput.match(/\[info\] (.*?): Downloading webpage/);
