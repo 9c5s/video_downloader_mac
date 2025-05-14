@@ -27,13 +27,13 @@ const SE = Application("System Events");
  * 単一動画用のデフォルトファイル名テンプレート (パス部分は含まない)。
  * @const {string}
  */
-const DEFAULT_FILENAME_TEMPLATE_SINGLE = `%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s`;
+const DEFAULT_FILENAME_TEMPLATE_SINGLE = `%(title)s.%(ext)s`;
 
 /**
  * プレイリスト内の動画アイテム用のデフォルトファイル名テンプレート (パス部分は含まない)。
  * @const {string}
  */
-const DEFAULT_FILENAME_TEMPLATE_PLAYLIST_ITEM = `%(playlist_index& - |)s%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s`;
+const DEFAULT_FILENAME_TEMPLATE_PLAYLIST_ITEM = `%(playlist_index& - |)s%(title)s.%(ext)s`;
 
 /**
  * フォルダ名として使用できない文字を置換する。
