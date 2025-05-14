@@ -13,8 +13,8 @@ macOS Automatorから呼び出し、Safari/ChromeのURLを基にyt-dlpで動画�
   * プレイリストはフォルダに分割ダウンロード
   * 通知で進捗/結果表示
 * テンプレート:
-  * 単一動画: `%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s`
-  * プレイリスト: `%(playlist_index& - |)s%(title)s_%(height)s_%(fps)s_%(vcodec.:4)s_(%(id)s).%(ext)s`
+  * 単一動画: `%(title)s.%(ext)s`
+  * プレイリスト: `%(playlist_index& - |)s%(title)s.%(ext)s`
 
 ## 導入
 
