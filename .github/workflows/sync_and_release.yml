@@ -11,7 +11,7 @@ on:
       create_release:
         description: "GitHub Releaseを作成しますか？ (true/false)"
         required: false
-        default: false
+        default: true
         type: boolean
       release_tag:
         description: "リリースのタグ名 (例: v1.0.0)。create_releaseがtrueの場合に必須です。"
@@ -28,7 +28,7 @@ on:
       generate_release_notes:
         description: "コミット履歴からリリースノートを自動生成しますか？ (true/false)"
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
@@ -49,7 +49,6 @@ jobs:
       - name: Define Gist parameters
         id: gist_params
         run: |
-          # TODO: 必要に応じて、ファイルパスやGistの詳細を調整してください
           echo "FILE_PATH=video_downloader_mac.js" >> $GITHUB_ENV
           echo "GIST_DESCRIPTION=JavaScript for video downloading on Mac (auto-updated via GitHub Actions)" >> $GITHUB_ENV
           echo "GIST_FILE_NAME=video_downloader_mac.js" >> $GITHUB_ENV # Gist上でのファイル名
