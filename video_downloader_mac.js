@@ -193,9 +193,10 @@ function getVideoOrPlaylistInfo(ytDlpPath, targetUrl) {
  * @param {string} ytDlpPath - yt-dlp実行ファイルのパス。
  * @param {string|null} ffmpegPath - ffmpeg実行ファイルのパス (オプション)。
  * @param {string} finalOutputTemplate - yt-dlpの `-o` に渡す完全な出力テンプレート。
+ * @param {string|null} downloadArchive - ダウンロードアーカイブファイルのパス (オプション)。
  * @returns {boolean} ダウンロードが成功したかどうか。
  */
-function downloadVideoEntry(videoEntry, ytDlpPath, ffmpegPath, finalOutputTemplate) {
+function downloadVideoEntry(videoEntry, ytDlpPath, ffmpegPath, finalOutputTemplate, downloadArchive) {
   const entryTitle = videoEntry.title || "無題の動画";
   const entryUrl = videoEntry.url;
 
@@ -218,6 +219,7 @@ function downloadVideoEntry(videoEntry, ytDlpPath, ffmpegPath, finalOutputTempla
     "-f bv+ba/b",
     `-o "${finalOutputTemplate}"`,
     `--ppa "Merger+ffmpeg_o1:-map_metadata -1"`,
+    downloadArchive ? `--download-archive \"${downloadArchive}\"` : "",
     `"${entryUrl}"`,
   ];
   const commandToExecute = ytDlpArgs.filter((arg) => arg !== "").join(" ");
@@ -257,9 +259,10 @@ function downloadVideoEntry(videoEntry, ytDlpPath, ffmpegPath, finalOutputTempla
 function parseInputArguments(inputArgs) {
   let downloadDir = null;
   let fileNameTemplate = null;
+  let downloadArchive = null;
 
   if (!Array.isArray(inputArgs)) {
-    return { downloadDir, fileNameTemplate };
+    return { downloadDir, fileNameTemplate, downloadArchive };
   }
 
   for (let i = 0; i < inputArgs.length; i++) {
@@ -269,9 +272,12 @@ function parseInputArguments(inputArgs) {
     } else if (inputArgs[i] === "-f" && i + 1 < inputArgs.length) {
       fileNameTemplate = inputArgs[i + 1];
       i++;
+    } else if (inputArgs[i] === "-a" && i + 1 < inputArgs.length) {
+      downloadArchive = inputArgs[i + 1];
+      i++;
     }
   }
-  return { downloadDir, fileNameTemplate };
+  return { downloadDir, fileNameTemplate, downloadArchive };
 }
 
 /**
@@ -329,7 +335,11 @@ function run(input = [], parameters = {}) {
   if (!ffmpegPath) return [];
 
   // Automatorからの引数を解析
-  const { downloadDir: userSpecifiedDir, fileNameTemplate: userSpecifiedFileTemplate } = parseInputArguments(input);
+  const {
+    downloadDir: userSpecifiedDir,
+    fileNameTemplate: userSpecifiedFileTemplate,
+    downloadArchive,
+  } = parseInputArguments(input);
 
   // デフォルトのダウンロードベースディレクトリ
   const defaultBaseDownloadsPath = APP.doShellScript("echo $HOME/Downloads").trim();
@@ -351,7 +361,7 @@ function run(input = [], parameters = {}) {
     const fallbackBaseDir = userSpecifiedDir || defaultBaseDownloadsPath;
     const fallbackFileName = userSpecifiedFileTemplate || DEFAULT_FILENAME_TEMPLATE_SINGLE;
     const fallbackOutputTemplate = `${fallbackBaseDir}/${fallbackFileName}`;
-    downloadVideoEntry(fallbackEntry, ytDlpPath, ffmpegPath, fallbackOutputTemplate);
+    downloadVideoEntry(fallbackEntry, ytDlpPath, ffmpegPath, fallbackOutputTemplate, downloadArchive);
     return [];
   }
 
@@ -377,7 +387,7 @@ function run(input = [], parameters = {}) {
       const itemFileNameTemplate = userSpecifiedFileTemplate || DEFAULT_FILENAME_TEMPLATE_PLAYLIST_ITEM;
       const finalItemOutputTemplate = `${playlistFullBaseDir}/${itemFileNameTemplate}`;
 
-      if (downloadVideoEntry(entry, ytDlpPath, ffmpegPath, finalItemOutputTemplate)) {
+      if (downloadVideoEntry(entry, ytDlpPath, ffmpegPath, finalItemOutputTemplate, downloadArchive)) {
         successCount++;
       } else {
         failureCount++;
@@ -401,7 +411,7 @@ function run(input = [], parameters = {}) {
     const singleVideoFileNameTemplate = userSpecifiedFileTemplate || DEFAULT_FILENAME_TEMPLATE_SINGLE;
     const finalSingleOutputTemplate = `${singleVideoBaseDir}/${singleVideoFileNameTemplate}`;
 
-    downloadVideoEntry(singleVideoEntry, ytDlpPath, ffmpegPath, finalSingleOutputTemplate);
+    downloadVideoEntry(singleVideoEntry, ytDlpPath, ffmpegPath, finalSingleOutputTemplate, downloadArchive);
   }
 
   return [];
