@@ -150,9 +150,6 @@ function executeShellCommand(commandToExecute) {
  * @typedef {object} VideoEntry
  * @property {string} url - ダウンロードに使用する動画のURL (通常はYouTubeのwatchページURL)。
  * @property {string} title - 動画のタイトル。
- * @property {string} id - 動画のYouTube ID。
- * @property {number} [playlist_index] - プレイリスト内のインデックス (オプション)。
- * @property {string} [playlist_title] - 所属するプレイリストのタイトル (オプション)。
  */
 
 /**
@@ -160,7 +157,6 @@ function executeShellCommand(commandToExecute) {
  * @property {string} title - 動画またはプレイリストのタイトル。
  * @property {boolean} isPlaylist - プレイリストであるかどうかのフラグ。
  * @property {VideoEntry[]} [entries] - プレイリストの場合、個々の動画エントリの配列。
- * @property {string} [id] - 単一動画の場合のYouTube ID。
  * @property {string} [webpage_url] - 元のURL (単一動画の場合、これがダウンロードに使われるべきURL)。
  */
 
@@ -174,46 +170,29 @@ function getVideoOrPlaylistInfo(ytDlpPath, targetUrl) {
   let title = "タイトル情報取得中...";
   let isPlaylist = false;
   let entries = [];
-  let id = "";
   let webpage_url = targetUrl;
 
   try {
-    const infoCommand = `"${ytDlpPath}" --dump-single-json --no-warnings --no-check-certificate "${targetUrl}"`;
+    const infoCommand = `"${ytDlpPath}" -J --flat-playlist --no-warnings --no-check-certificate "${targetUrl}"`;
     const { output: infoJson, exitCode: infoExitCode } = executeShellCommand(infoCommand);
 
     if (infoExitCode === 0 && infoJson) {
       try {
         const parsedInfo = JSON.parse(infoJson);
-        id = parsedInfo.id || "";
-
         if (parsedInfo._type === "playlist" || parsedInfo.entries) {
           isPlaylist = true;
           title = parsedInfo.title || "無題のプレイリスト";
           webpage_url = parsedInfo.webpage_url || targetUrl;
-
           entries = (parsedInfo.entries || []).map((entry, index) => {
-            let bestUrl = entry.webpage_url;
-            if (!bestUrl || !bestUrl.includes("youtube.com/watch")) {
-              if (entry.id) bestUrl = `https://www.youtube.com/watch?v=${entry.id}`;
-              else bestUrl = entry.url || entry.webpage_url;
-            }
             return {
-              url: bestUrl,
+              url: entry.url,
               title: entry.title || `無題の動画 ${index + 1}`,
-              id: entry.id || "",
-              playlist_index: entry.playlist_index || index + 1,
-              playlist_title: title,
             };
           });
         } else {
           title = parsedInfo.title || "無題の動画";
           isPlaylist = false;
-          let bestSingleUrl = parsedInfo.webpage_url;
-          if (!bestSingleUrl || !bestSingleUrl.includes("youtube.com/watch")) {
-            if (id) bestSingleUrl = `https://www.youtube.com/watch?v=${id}`;
-            else bestSingleUrl = targetUrl;
-          }
-          webpage_url = bestSingleUrl;
+          webpage_url = parsedInfo.webpage_url;
         }
       } catch (parseError) {
         console.log(`JSONパースエラー: ${parseError.message}\nJSON (最初の500文字): ${infoJson.substring(0, 500)}`);
@@ -227,7 +206,7 @@ function getVideoOrPlaylistInfo(ytDlpPath, targetUrl) {
     console.log(`動画/プレイリスト情報取得コマンドの実行エラー: ${e.message}`);
     title = "タイトル情報取得エラー";
   }
-  return { title, isPlaylist, entries, id, webpage_url };
+  return { title, isPlaylist, entries, webpage_url };
 }
 
 /**
@@ -359,7 +338,6 @@ function run(input = [], parameters = {}) {
     const fallbackEntry = {
       url: initialUrl,
       title: videoInfo.title.includes("失敗") ? "不明な動画" : videoInfo.title,
-      id: "",
     };
     // フォールバック時の出力テンプレート
     const fallbackBaseDir = userSpecifiedDir || defaultBaseDownloadsPath;
@@ -408,7 +386,6 @@ function run(input = [], parameters = {}) {
     const singleVideoEntry = {
       url: videoInfo.webpage_url,
       title: videoInfo.title,
-      id: videoInfo.id,
     };
     // 単一動画の保存先ディレクトリ: -d があればそれ、なければデフォルトのDownloads
     const singleVideoBaseDir = userSpecifiedDir || defaultBaseDownloadsPath;
