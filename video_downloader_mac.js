@@ -48,28 +48,6 @@ function sanitizeFolderName(folderName) {
 }
 
 /**
- * 実行ファイルのフルパスを検索する。
- * @param {string} executableName - 検索対象の実行ファイル名。
- * @returns {string|null} 見つかった場合は実行ファイルのフルパス、見つからない場合はnull。
- */
-function findFullPathForExecutable(executableName) {
-  try {
-    const pathFromCommandV = APP.doShellScript(`command -v "${executableName}"`).trim();
-    if (pathFromCommandV.startsWith("/")) return pathFromCommandV;
-  } catch (e) {}
-
-  const commonPaths = ["/opt/homebrew/bin", "/usr/local/bin"];
-  for (const path of commonPaths) {
-    const fullPath = `${path}/${executableName}`;
-    try {
-      APP.doShellScript(`test -x "${fullPath}"`);
-      return fullPath;
-    } catch (e) {}
-  }
-  return null;
-}
-
-/**
  * macOSの通知を表示する。
  * @param {string} title - 通知のタイトル。
  * @param {string} message - 通知の本文。
@@ -235,7 +213,7 @@ function downloadVideoEntry(videoEntry, ytDlpPath, ffmpegPath, finalOutputTempla
 
   const ytDlpArgs = [
     `"${ytDlpPath}"`,
-    ffmpegPath ? `--ffmpeg-location "${ffmpegPath}"` : "",
+    `--ffmpeg-location "${ffmpegPath}"`,
     "-S codec:avc:aac,res:1080,fps:60,hdr:sdr",
     "-f bv+ba/b",
     `-o "${finalOutputTemplate}"`,
@@ -297,6 +275,40 @@ function parseInputArguments(inputArgs) {
 }
 
 /**
+ * 実行ファイルのフルパスを検索し、見つからなければエラーダイアログを表示して処理を中断する。
+ * @param {string} name - 検索対象の実行ファイル名。
+ * @returns {string|null} 見つかった場合は実行ファイルのフルパス、見つからない場合はnull（エラーダイアログも表示）
+ */
+function findExec(name) {
+  let path = null;
+  try {
+    const pathFromCommandV = APP.doShellScript(`command -v "${name}"`).trim();
+    if (pathFromCommandV.startsWith("/")) path = pathFromCommandV;
+  } catch (e) {}
+
+  if (!path) {
+    const commonPaths = ["/opt/homebrew/bin", "/usr/local/bin"];
+    for (const p of commonPaths) {
+      const fullPath = `${p}/${name}`;
+      try {
+        APP.doShellScript(`test -x "${fullPath}"`);
+        path = fullPath;
+        break;
+      } catch (e) {}
+    }
+  }
+
+  if (!path) {
+    showErrorDialog(
+      `${name} 実行エラー`,
+      `${name} が見つかりませんでした。\n\nHomebrew等で ${name} が正しくインストールされているか確認してください。`
+    );
+    return null;
+  }
+  return path;
+}
+
+/**
  * メイン処理を実行する関数。
  * Automatorワークフローから呼び出される。
  * @param {string[]} [input=[]] - Automatorからの入力。例: ["-d", "/path/to/dir", "-f", "name_template.%(ext)s"]
@@ -309,16 +321,12 @@ function run(input = [], parameters = {}) {
     return [];
   }
 
-  const ytDlpPath = findFullPathForExecutable("yt-dlp");
-  if (!ytDlpPath) {
-    showErrorDialog(
-      "yt-dlp 実行エラー",
-      "yt-dlp が見つからなかった。\n\nHomebrew等で yt-dlp が正しくインストールされているか確認すること。"
-    );
-    return [];
-  }
+  // パスの確認
+  const ytDlpPath = findExec("yt-dlp");
+  if (!ytDlpPath) return [];
 
-  const ffmpegPath = findFullPathForExecutable("ffmpeg");
+  const ffmpegPath = findExec("ffmpeg");
+  if (!ffmpegPath) return [];
 
   // Automatorからの引数を解析
   const { downloadDir: userSpecifiedDir, fileNameTemplate: userSpecifiedFileTemplate } = parseInputArguments(input);
